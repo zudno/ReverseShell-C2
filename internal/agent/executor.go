@@ -24,6 +24,8 @@ func ExecuteTask(ctx context.Context, spec protocol.TaskSpec, info protocol.Agen
 		res = runShell(ctx, spec)
 	case protocol.KindSysinfo:
 		res = sysinfo(info)
+	case protocol.KindExit:
+		res = protocol.TaskResult{Status: protocol.StatusOK, Detail: "agent exiting"}
 	default:
 		res = protocol.TaskResult{
 			Status: protocol.StatusUnsupported,

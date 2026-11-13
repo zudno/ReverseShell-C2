@@ -110,6 +110,7 @@ func TestCreateTaskValidation(t *testing.T) {
 		{"shell empty cmd", `{"kind":"shell","args":{"cmd":""}}`, http.StatusBadRequest},
 		{"shell ok", `{"kind":"shell","args":{"cmd":"whoami"}}`, http.StatusAccepted},
 		{"sysinfo ok", `{"kind":"sysinfo"}`, http.StatusAccepted},
+		{"exit ok", `{"kind":"exit"}`, http.StatusAccepted},
 		{"negative timeout", `{"kind":"sysinfo","timeout":-1}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {

@@ -14,6 +14,7 @@ func newTestSession(sid string) *Session {
 		Outbound: make(chan *protocol.Envelope, 4),
 		Agent:    protocol.AgentInfo{Hostname: "lab-01", OS: "windows", User: "labuser"},
 		State:    StateRegistered,
+		LastSeen: time.Now().UTC(),
 	}
 }
 
@@ -57,6 +58,53 @@ func TestRegistryTouchUpdatesState(t *testing.T) {
 	}
 	if list[0].LastSeen.IsZero() {
 		t.Fatal("LastSeen not updated")
+	}
+}
+
+func TestRegistrySweepRemovesOnlyStale(t *testing.T) {
+	r := NewRegistry()
+	fresh := newTestSession("fresh")
+	stale := newTestSession("stale")
+	stale.LastSeen = time.Now().Add(-time.Hour).UTC()
+	if err := r.Add(fresh); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(stale); err != nil {
+		t.Fatal(err)
+	}
+
+	removed := r.Sweep(time.Now().Add(-time.Minute).UTC())
+	if len(removed) != 1 || removed[0].SID != "stale" {
+		t.Fatalf("removed = %+v", removed)
+	}
+	if r.Len() != 1 {
+		t.Fatalf("len = %d, want 1", r.Len())
+	}
+	if _, err := r.Get("stale"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale session still reachable: %v", err)
+	}
+}
+
+func TestRemoveSessionGuardsPointerIdentity(t *testing.T) {
+	r := NewRegistry()
+	first := newTestSession("s1")
+	if err := r.Add(first); err != nil {
+		t.Fatal(err)
+	}
+	r.RemoveSession(first)
+	if r.Len() != 0 {
+		t.Fatalf("len = %d, want 0", r.Len())
+	}
+
+	// A resumed session under the same sid must not be removed by the old
+	// connection's deferred cleanup.
+	second := newTestSession("s1")
+	if err := r.Add(second); err != nil {
+		t.Fatal(err)
+	}
+	r.RemoveSession(first)
+	if r.Len() != 1 {
+		t.Fatal("resumed session was removed by a stale pointer")
 	}
 }
 

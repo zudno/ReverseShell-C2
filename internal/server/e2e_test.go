@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/user"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -28,35 +26,16 @@ func TestEndToEndLoopback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
-	srv, err := server.New(server.Config{
-		TransportName: "tcp",
-		ListenerAddr:  "127.0.0.1:0",
-		MaxFrameBytes: protocol.DefaultMaxFrameBytes,
-		AuditLogPath:  auditPath,
+	srv, ts, auditPath := startStack(t, ctx, server.Config{
+		TransportName:   "tcp",
+		MaxFrameBytes:   protocol.DefaultMaxFrameBytes,
+		StaleMultiplier: 3,
 		SessionCfg: protocol.SessionConfig{
 			HeartbeatInterval: 15,
 			HeartbeatJitter:   0.2,
 			MaxFrameBytes:     protocol.DefaultMaxFrameBytes,
 		},
 	})
-	if err != nil {
-		t.Fatalf("server.New: %v", err)
-	}
-	apiSrv, err := api.New(api.Config{
-		Addr:    "127.0.0.1:0",
-		Token:   "e2e-token",
-		Backend: srv,
-		Audit:   srv.Audit(),
-	})
-	if err != nil {
-		t.Fatalf("api.New: %v", err)
-	}
-	t.Cleanup(func() { _ = apiSrv.Close() })
-	ts := httptest.NewServer(apiSrv.Handler())
-	t.Cleanup(ts.Close)
-
-	go func() { _ = srv.Run(ctx) }()
 
 	nonce, err := session.NewNonce()
 	if err != nil {

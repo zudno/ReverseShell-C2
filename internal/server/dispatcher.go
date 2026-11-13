@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -143,6 +144,42 @@ func (d *Dispatcher) OnResult(env *protocol.Envelope) {
 		"status":    res.Status,
 		"exit_code": res.ExitCode,
 	})
+}
+
+// Resume re-enqueues tasks that never produced a result onto the resumed
+// session's fresh outbound FIFO (README §4.7). Delivery is at-least-once:
+// a task whose result was lost in the drop may run again. Returns the
+// count re-enqueued.
+func (d *Dispatcher) Resume(sess *session.Session) int {
+	d.mu.Lock()
+	pending := make([]*TaskRecord, 0, 4)
+	for _, t := range d.tasks {
+		if t.SID == sess.SID && t.Status == taskQueued {
+			pending = append(pending, t)
+		}
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].CreatedAt.Before(pending[j].CreatedAt) })
+	d.mu.Unlock()
+
+	n := 0
+	for _, t := range pending {
+		env := protocol.NewEnvelope(protocol.TypeTask)
+		env.SID = t.SID
+		env.TID = t.TID
+		data, err := json.Marshal(t.Spec)
+		if err != nil {
+			continue
+		}
+		env.Data = data
+		select {
+		case sess.Outbound <- env:
+			n++
+		default:
+			d.audit.LogAttrs(context.Background(), slog.LevelWarn, "task.requeue.dropped",
+				slog.String("sid", t.SID), slog.String("tid", t.TID))
+		}
+	}
+	return n
 }
 
 // Task returns the task record for the operator API.

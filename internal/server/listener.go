@@ -11,9 +11,9 @@ import (
 	"reverseshell/internal/transport"
 )
 
-// handleConn runs one agent connection: the REGISTER handshake, then a
-// reader loop paired with a writer goroutine that drains the session's
-// outbound FIFO (README §4.6).
+// handleConn runs one agent connection: the REGISTER handshake (resuming
+// the session when the nonce is known), then a reader loop paired with a
+// writer goroutine that drains the session's outbound FIFO (README §4.6).
 func (s *Server) handleConn(ctx context.Context, conn transport.Conn) {
 	defer conn.Close()
 
@@ -21,7 +21,7 @@ func (s *Server) handleConn(ctx context.Context, conn transport.Conn) {
 	if !ok {
 		return
 	}
-	sid, err := session.NewSID()
+	sid, resumed, err := s.resolveSession(info.Nonce)
 	if err != nil {
 		s.reject(ctx, conn, protocol.ErrCodeInternal, "cannot mint session id")
 		return
@@ -36,6 +36,9 @@ func (s *Server) handleConn(ctx context.Context, conn transport.Conn) {
 		LastSeen:    time.Now().UTC(),
 		Outbound:    make(chan *protocol.Envelope, 16),
 	}
+	// The previous record (if any) is superseded; only our own cleanup may
+	// remove the fresh one.
+	s.registry.Remove(sid)
 	if err := s.registry.Add(sess); err != nil {
 		s.reject(ctx, conn, protocol.ErrCodeInternal, "session registration failed")
 		return
@@ -43,15 +46,11 @@ func (s *Server) handleConn(ctx context.Context, conn transport.Conn) {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	s.mu.Lock()
-	s.conns[sid] = conn
-	s.mu.Unlock()
+	s.storeConn(sid, conn)
 
 	defer func() {
-		s.registry.Remove(sid)
-		s.mu.Lock()
-		delete(s.conns, sid)
-		s.mu.Unlock()
+		s.registry.RemoveSession(sess)
+		s.dropConnIf(sid, conn)
 		s.audit.LogAttrs(context.Background(), slog.LevelInfo, "session.down",
 			slog.String("sid", sid))
 		s.events.Emit("session.down", map[string]string{"sid": sid})
@@ -61,16 +60,24 @@ func (s *Server) handleConn(ctx context.Context, conn transport.Conn) {
 		return
 	}
 
-	s.audit.LogAttrs(context.Background(), slog.LevelInfo, "session.register",
-		slog.String("sid", sid), slog.String("src", sess.Peer),
-		slog.String("os", info.OS), slog.String("user", info.User),
-		slog.String("hostname", info.Hostname))
-	s.events.Emit("session.register", map[string]string{
-		"sid":      sid,
-		"os":       info.OS,
-		"user":     info.User,
-		"hostname": info.Hostname,
-	})
+	if resumed {
+		n := s.dispatcher.Resume(sess)
+		s.audit.LogAttrs(context.Background(), slog.LevelInfo, "session.resume",
+			slog.String("sid", sid), slog.String("src", sess.Peer),
+			slog.Int("requeued", n))
+		s.events.Emit("session.resume", map[string]any{"sid": sid, "requeued": n})
+	} else {
+		s.audit.LogAttrs(context.Background(), slog.LevelInfo, "session.register",
+			slog.String("sid", sid), slog.String("src", sess.Peer),
+			slog.String("os", info.OS), slog.String("user", info.User),
+			slog.String("hostname", info.Hostname))
+		s.events.Emit("session.register", map[string]string{
+			"sid":      sid,
+			"os":       info.OS,
+			"user":     info.User,
+			"hostname": info.Hostname,
+		})
+	}
 
 	go s.writeLoop(sctx, conn, sess.Outbound)
 
@@ -116,6 +123,27 @@ func (s *Server) handleConn(ctx context.Context, conn transport.Conn) {
 			return
 		}
 	}
+}
+
+// resolveSession maps the agent nonce to its sid. A known nonce resumes the
+// same session (kicking any leftover connection); a fresh nonce mints a
+// new sid and is remembered for future resumes (README §4.7).
+func (s *Server) resolveSession(nonce string) (sid string, resumed bool, err error) {
+	fresh, err := session.NewSID()
+	if err != nil {
+		return "", false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if known, ok := s.nonces[nonce]; ok {
+		if old, ok := s.conns[known]; ok {
+			_ = old.Close() // unblock the superseded handler; its cleanup no-ops
+		}
+		delete(s.conns, known)
+		return known, true, nil
+	}
+	s.nonces[nonce] = fresh
+	return fresh, false, nil
 }
 
 // expectRegister consumes the first frame and validates it as a REGISTER.

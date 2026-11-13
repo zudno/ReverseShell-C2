@@ -58,10 +58,11 @@ func main() {
 	}
 
 	srv, err := server.New(server.Config{
-		TransportName: cfg.Listener.Transport,
-		ListenerAddr:  net.JoinHostPort(cfg.Listener.Host, strconv.Itoa(cfg.Listener.Port)),
-		MaxFrameBytes: cfg.Listener.MaxFrameBytes,
-		AuditLogPath:  cfg.Audit.Log,
+		TransportName:   cfg.Listener.Transport,
+		ListenerAddr:    net.JoinHostPort(cfg.Listener.Host, strconv.Itoa(cfg.Listener.Port)),
+		MaxFrameBytes:   cfg.Listener.MaxFrameBytes,
+		AuditLogPath:    cfg.Audit.Log,
+		StaleMultiplier: cfg.Session.StaleMultiplier,
 		SessionCfg: protocol.SessionConfig{
 			HeartbeatInterval: cfg.Session.HeartbeatInterval,
 			HeartbeatJitter:   cfg.Session.HeartbeatJitter,

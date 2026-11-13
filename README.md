@@ -476,6 +476,8 @@ rs[b3f1a2c9d0e8]> exec whoami
 [77c2e4a1] ok (41 ms)
  desktop-abc\labuser
 rs[b3f1a2c9d0e8]> sysinfo
+rs[b3f1a2c9d0e8]> kill
+[9f01e2ab] exit task queued
 rs[b3f1a2c9d0e8]> back
 rs> shutdown
 ```
@@ -774,14 +776,14 @@ La consola lista la sesión y permite operarla:
 
 ## 15. Roadmap
 
-| Fase | Entregable | Criterio de done |
-|---|---|---|
-| **F0** | `go.mod`, `Makefile`, `.gitignore`, `config.example.toml`, CI con quality gates | `gofmt+vet+test -race+build` en verde desde el primer commit |
-| **F1** | MVP de los 4 componentes: agent + teamserver (listener TCP embebido) + operator API mínimo (`sessions`, `tasks`, `events`) + console (`sessions`/`exec`) | `whoami` de punta a punta **desde la console**, atravesando los 3 planos en loopback |
-| **F2** | Robustez de sesiones: HEARTBEAT/ACK, reconexión backoff+jitter, STALE, audit JSONL completo, cola de tasks, `exit` | Matar el agent y verlo retomar la misma sesión; la auditoría reproduce la sesión completa |
-| **F3** | Hardening: TLS en plano de sesiones, HMAC del implant, TLS+token del operator API fuera de loopback | Conexión sin credenciales rechazada y auditada en ambos planos |
-| **F4** | Transport HTTP(S) del implant + `cmd/listener` remoto (relay sobre TLS) | Un listener remoto en otro host del laboratorio alimenta al teamserver central |
-| **F5** | `upload`/`download` con troceado+checksum, persistencia de tasks, multi-operador, web frontend (React/Vue) sobre la misma API | Archivo íntegro verificado por hash; dos operadores concurrentes sin interferirse |
+| Fase | Estado | Entregable | Criterio de done |
+|---|---|---|---|
+| **F0** | Completada | `go.mod`, `Makefile`, `.gitignore`, `config.example.toml`, CI con quality gates | `gofmt+vet+test -race+build` en verde desde el primer commit |
+| **F1** | Completada | MVP de los 4 componentes: agent + teamserver (listener TCP embebido) + operator API mínimo (`sessions`, `tasks`, `events`) + console (`sessions`/`exec`) | `whoami` de punta a punta **desde la console**, atravesando los 3 planos en loopback |
+| **F2** | Completada | Robustez de sesiones: HEARTBEAT/ACK, reconexión backoff+jitter, resume por nonce, STALE, audit JSONL completo, requeue de tasks, `exit` | Matar el agent y verlo retomar la misma sesión; la auditoría reproduce la sesión completa |
+| **F3** | Pendiente | Hardening: TLS en plano de sesiones, HMAC del implant, TLS+token del operator API fuera de loopback | Conexión sin credenciales rechazada y auditada en ambos planos |
+| **F4** | Pendiente | Transport HTTP(S) del implant + `cmd/listener` remoto (relay sobre TLS) | Un listener remoto en otro host del laboratorio alimenta al teamserver central |
+| **F5** | Pendiente | `upload`/`download` con troceado+checksum, persistencia de tasks, multi-operador, web frontend (React/Vue) sobre la misma API | Archivo íntegro verificado por hash; dos operadores concurrentes sin interferirse |
 
 ---
 

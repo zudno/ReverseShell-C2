@@ -65,6 +65,13 @@ func TestExecuteSysinfo(t *testing.T) {
 	}
 }
 
+func TestExecuteExit(t *testing.T) {
+	res := ExecuteTask(context.Background(), protocol.TaskSpec{Kind: protocol.KindExit}, protocol.AgentInfo{})
+	if res.Status != protocol.StatusOK {
+		t.Fatalf("status = %q detail = %q", res.Status, res.Detail)
+	}
+}
+
 func TestExecuteShellTimeout(t *testing.T) {
 	cmd := "sleep 3"
 	if runtime.GOOS == "windows" {

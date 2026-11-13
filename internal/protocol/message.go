@@ -32,6 +32,7 @@ type TaskSpec struct {
 const (
 	KindShell   = "shell"
 	KindSysinfo = "sysinfo"
+	KindExit    = "exit"
 )
 
 // ShellArgs is the args payload of a shell task.

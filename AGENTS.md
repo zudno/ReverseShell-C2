@@ -42,10 +42,13 @@ in-scope alternative instead of implementing it.
 
 ## Project status
 
-Early-stage / greenfield. The repo is currently a skeleton (this file plus
-`.opencode/`). The sections below describe the **intended** conventions so that the
-first code written follows them. When real code lands, update this file to match
-reality (prefer opencode's `/init` or edit in place rather than rewriting wholesale).
+Early-stage. F0–F2 are landed: the four components (agent, teamserver, console, and
+a standalone-listener placeholder) build and pass the quality gates. The session
+plane speaks the wire protocol with heartbeats, backoff+jitter reconnection,
+nonce-based session resume, STALE sweeping, and a full audit trail. The sections
+below describe the conventions the code follows — when reality drifts from this
+file, update the file (prefer opencode's `/init` or edit in place rather than
+rewriting wholesale).
 
 ---
 

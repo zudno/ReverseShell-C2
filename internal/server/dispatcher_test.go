@@ -57,6 +57,42 @@ func TestCreateTaskUnknownSession(t *testing.T) {
 	}
 }
 
+func TestResumeRequeuesPendingTasks(t *testing.T) {
+	reg := session.NewRegistry()
+	d := NewDispatcher(reg, discardLogger(), NewEventBus())
+
+	// First incarnation of s1: the task stays queued and undelivered
+	// because nothing drains the channel.
+	s1 := &session.Session{SID: "s1", Outbound: make(chan *protocol.Envelope, 1)}
+	if err := reg.Add(s1); err != nil {
+		t.Fatal(err)
+	}
+	tid, err := d.CreateTask(context.Background(), "s1",
+		protocol.TaskSpec{Kind: protocol.KindShell, Args: json.RawMessage(`{"cmd":"whoami"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The session drops and comes back with a fresh FIFO under the same sid.
+	reg.Remove("s1")
+	s2 := &session.Session{SID: "s1", Outbound: make(chan *protocol.Envelope, 4)}
+	if err := reg.Add(s2); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := d.Resume(s2); n != 1 {
+		t.Fatalf("requeued = %d, want 1", n)
+	}
+	select {
+	case env := <-s2.Outbound:
+		if env.Type != protocol.TypeTask || env.TID != tid || env.SID != "s1" {
+			t.Fatalf("envelope = %+v", env)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no task requeued onto the resumed session")
+	}
+}
+
 func TestOnResultStoresAndEmits(t *testing.T) {
 	reg := session.NewRegistry()
 	ev := NewEventBus()

@@ -99,11 +99,37 @@ func (r *Registry) Touch(sid string, st State) {
 	}
 }
 
-// Remove drops a session from the registry.
+// Remove drops a session from the registry by id.
 func (r *Registry) Remove(sid string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.sessions, sid)
+}
+
+// RemoveSession drops the session only if the stored record is still the
+// same pointer. A session resumed under the same sid must not be removed by
+// the old connection's deferred cleanup.
+func (r *Registry) RemoveSession(s *Session) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cur, ok := r.sessions[s.SID]; ok && cur == s {
+		delete(r.sessions, s.SID)
+	}
+}
+
+// Sweep removes sessions whose LastSeen is before cutoff and returns the
+// removed records — the STALE reaper's backing store operation.
+func (r *Registry) Sweep(cutoff time.Time) []Session {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var removed []Session
+	for sid, s := range r.sessions {
+		if s.LastSeen.Before(cutoff) {
+			removed = append(removed, *s)
+			delete(r.sessions, sid)
+		}
+	}
+	return removed
 }
 
 // Len returns the number of live sessions.

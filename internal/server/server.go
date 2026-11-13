@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"reverseshell/internal/api"
 	"reverseshell/internal/protocol"
@@ -21,11 +22,12 @@ import (
 
 // Config configures the teamserver core.
 type Config struct {
-	TransportName string
-	ListenerAddr  string // "host:port"; the embedded listener bind
-	MaxFrameBytes int
-	AuditLogPath  string
-	SessionCfg    protocol.SessionConfig
+	TransportName   string
+	ListenerAddr    string // "host:port"; the embedded listener bind
+	MaxFrameBytes   int
+	AuditLogPath    string
+	StaleMultiplier float64 // × heartbeat_interval without signal → STALE
+	SessionCfg      protocol.SessionConfig
 }
 
 // Server is the teamserver core. It implements api.Backend.
@@ -43,6 +45,7 @@ type Server struct {
 	wg     sync.WaitGroup
 	mu     sync.Mutex
 	conns  map[string]transport.Conn
+	nonces map[string]string // agent nonce → sid; survives drops for resume
 	cancel context.CancelFunc
 }
 
@@ -61,6 +64,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.AuditLogPath == "" {
 		cfg.AuditLogPath = "logs/audit.jsonl"
+	}
+	if cfg.StaleMultiplier <= 0 {
+		cfg.StaleMultiplier = 3
 	}
 	tr, err := transport.ByName(cfg.TransportName)
 	if err != nil {
@@ -94,6 +100,7 @@ func New(cfg Config) (*Server, error) {
 		tr:        tr,
 		listener:  l,
 		conns:     make(map[string]transport.Conn),
+		nonces:    make(map[string]string),
 	}
 	s.dispatcher = NewDispatcher(s.registry, audit, s.events)
 	audit.LogAttrs(context.Background(), slog.LevelInfo, "listener.start",
@@ -120,6 +127,10 @@ func (s *Server) Run(ctx context.Context) error {
 		cancel()
 		_ = s.listener.Close()
 	}()
+
+	if s.cfg.SessionCfg.HeartbeatInterval > 0 {
+		go s.reapLoop(rctx)
+	}
 
 	for {
 		conn, err := s.listener.Accept(rctx)
@@ -213,4 +224,54 @@ func (s *Server) Shutdown(_ context.Context) error {
 	}
 	cancel()
 	return nil
+}
+
+// reapLoop marks sessions STALE when no signal arrived for
+// stale_multiplier × heartbeat_interval (README §7): it sweeps them from
+// the registry, closes their connections, and audits the event.
+func (s *Server) reapLoop(ctx context.Context) {
+	interval := time.Duration(s.cfg.SessionCfg.HeartbeatInterval * float64(time.Second))
+	threshold := time.Duration(float64(interval) * s.cfg.StaleMultiplier)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().UTC().Add(-threshold)
+			for _, sess := range s.registry.Sweep(cutoff) {
+				s.closeConn(sess.SID)
+				s.audit.LogAttrs(context.Background(), slog.LevelInfo, "session.stale",
+					slog.String("sid", sess.SID))
+				s.events.Emit("session.stale", map[string]string{"sid": sess.SID})
+			}
+		}
+	}
+}
+
+// storeConn records the conn serving a sid.
+func (s *Server) storeConn(sid string, c transport.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conns[sid] = c
+}
+
+// dropConnIf removes the sid's conn only if it is still c: a resumed
+// session's new conn must not be deleted by the old handler's cleanup.
+func (s *Server) dropConnIf(sid string, c transport.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conns[sid] == c {
+		delete(s.conns, sid)
+	}
+}
+
+// closeConn closes the conn serving a sid, if any (STALE sweep, resume).
+func (s *Server) closeConn(sid string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.conns[sid]; ok {
+		_ = c.Close()
+	}
 }

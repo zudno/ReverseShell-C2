@@ -77,6 +77,8 @@ func (r *REPL) Run(ctx context.Context) error {
 			err = r.cmdExec(ctx, rest, protocol.KindShell)
 		case "sysinfo":
 			err = r.cmdExec(ctx, "", protocol.KindSysinfo)
+		case "kill":
+			err = r.cmdKill(ctx)
 		case "back":
 			r.selected = ""
 		case "shutdown":
@@ -107,6 +109,7 @@ func (r *REPL) printHelp() {
 	fmt.Fprintln(r.out, "  use <n|sid>      select a session by list number or sid")
 	fmt.Fprintln(r.out, "  exec <cmd...>    run a shell command on the selected session")
 	fmt.Fprintln(r.out, "  sysinfo          agent snapshot of the selected session")
+	fmt.Fprintln(r.out, "  kill             ask the selected agent to exit cleanly")
 	fmt.Fprintln(r.out, "  back             deselect the session")
 	fmt.Fprintln(r.out, "  shutdown         stop the teamserver and exit")
 	fmt.Fprintln(r.out, "  quit             exit the console")
@@ -123,6 +126,21 @@ func (r *REPL) onEvent(evType string, data []byte) {
 		}
 		if json.Unmarshal(data, &m) == nil {
 			fmt.Fprintf(r.out, "\r[new session %s — %s\\%s (%s)]\n", m.SID, m.OS, m.User, m.Hostname)
+		}
+	case "session.resume":
+		var m struct {
+			SID      string `json:"sid"`
+			Requeued int    `json:"requeued"`
+		}
+		if json.Unmarshal(data, &m) == nil {
+			fmt.Fprintf(r.out, "\r[session %s reconnected — %d task(s) requeued]\n", m.SID, m.Requeued)
+		}
+	case "session.stale":
+		var m struct {
+			SID string `json:"sid"`
+		}
+		if json.Unmarshal(data, &m) == nil {
+			fmt.Fprintf(r.out, "\r[session %s went stale]\n", m.SID)
 		}
 	case "session.down":
 		var m struct {
@@ -245,6 +263,21 @@ func printResult(out io.Writer, view api.TaskView) {
 	if view.Result.Detail != "" {
 		fmt.Fprintln(out, "detail: "+view.Result.Detail)
 	}
+}
+
+// cmdKill asks the selected agent to exit cleanly (task kind "exit"). The
+// agent flushes its final result before closing; the session.down SSE
+// event confirms the drop.
+func (r *REPL) cmdKill(ctx context.Context) error {
+	if r.selected == "" {
+		return fmt.Errorf("no session selected — use 'use <n|sid>' first")
+	}
+	tid, err := r.client.CreateTask(ctx, r.selected, protocol.TaskSpec{Kind: protocol.KindExit, Timeout: 5})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(r.out, "[%s] exit task queued\n", tid)
+	return nil
 }
 
 func (r *REPL) cmdShutdown(ctx context.Context) error {

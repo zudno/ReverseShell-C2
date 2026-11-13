@@ -192,10 +192,10 @@ func validateSpec(spec *protocol.TaskSpec) error {
 		if err := json.Unmarshal(spec.Args, &a); err != nil || a.Cmd == "" {
 			return errors.New("shell task requires args.cmd")
 		}
-	case protocol.KindSysinfo:
+	case protocol.KindSysinfo, protocol.KindExit:
 		// no args
 	default:
-		return fmt.Errorf("unknown kind %q (supported: shell, sysinfo)", spec.Kind)
+		return fmt.Errorf("unknown kind %q (supported: shell, sysinfo, exit)", spec.Kind)
 	}
 	if spec.Timeout < 0 {
 		return errors.New("timeout must be >= 0")
