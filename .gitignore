@@ -1,0 +1,16 @@
+# Build artifacts
+bin/
+
+# Local configuration — holds real hosts and tokens
+config.toml
+
+# Logs and audit output
+logs/
+
+# Throwaway lab environments (may hold real IPs)
+labs/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp

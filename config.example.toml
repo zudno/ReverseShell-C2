@@ -1,0 +1,32 @@
+# config.example.toml — plantilla.
+# Copia a config.toml (gitignored) y ajusta valores; cada clave admite
+# override por env var: RS_<SECCION>_<CLAVE> (p. ej. RS_LISTENER_PORT).
+
+[teamserver]
+api_host = "127.0.0.1"     # bind del operator API — loopback por defecto
+api_port = 5555
+operator_token = "<openssl rand -hex 32>"   # bearer token del plano de control
+
+[listener]                 # listener embebido en el teamserver
+host = "127.0.0.1"         # bind de sesiones — loopback por defecto
+port = 4444
+transport = "tcp"          # tcp | tls | http
+max_frame_bytes = 4194304  # 4 MiB
+
+[session]
+heartbeat_interval = 15.0  # segundos
+heartbeat_jitter = 0.2     # ±20 %
+stale_multiplier = 3      # sin señal 3×interval → STALE
+
+[agent]
+connect_host = "127.0.0.1" # a dónde conecta el implant
+connect_port = 4444
+transport = "tcp"
+reconnect_base = 1.0       # segundos (backoff exponencial)
+reconnect_cap = 300.0
+
+[auth]                     # fase 3 — HMAC del implant; deshabilitado si ausente
+# implant_token = "<openssl rand -hex 32>"
+
+[audit]
+log = "logs/audit.jsonl"
