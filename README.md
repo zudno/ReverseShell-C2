@@ -548,10 +548,12 @@ Compromete el teamserver = compromete **todas** las sesiones y la auditoría. Po
   a red exige flag explícito + TLS (F3).
 - El operador nunca tiene acceso directo al plano de sesiones — toda acción pasa por el
   API autenticado y queda auditada.
-- Auth del implant (fase 3): token compartido en `config.toml`; el `REGISTER` viaja con
-  `hmac_sha256(token, nonce || hostname || str(ts))` (`crypto/hmac` + `crypto/sha256`).
-  HMAC inválido → `ERROR AUTH_FAILED`, cierre, y evento en auditoría. El token jamás se
-  loguea ni se pone en el wire.
+- Auth del implant: token compartido en `config.toml` (`[auth] implant_token`); el
+  `REGISTER` viaja con `hmac_sha256(token, nonce || hostname || str(ts))`
+  (`crypto/hmac` + `crypto/sha256`). HMAC inválido → `ERROR AUTH_FAILED`, cierre, y
+  evento `session.auth.failed` en auditoría. El token jamás se loguea ni se pone en el
+  wire. La verificación TLS del listener usa un CA bundle (`[tls] ca`) por defecto;
+  `insecure = true` es un opt-in explícito advertido en stderr, solo para laboratorio.
 - Token de operator API generado con `openssl rand -hex 32`.
 
 ### 9.3 Log de auditoría (JSONL)
@@ -609,7 +611,7 @@ ReverseShell/
 │   ├── transport/
 │   │   ├── transport.go       # interfaces Conn / Listener / Transport + factoría
 │   │   ├── tcp.go             # + tcp_test.go
-│   │   ├── tls.go             # F3
+│   │   ├── tls.go             # + tls_test.go — TLS sobre el framing compartido
 │   │   └── http.go            # F4
 │   ├── session/
 │   │   ├── ids.go             # sid/tid/nonce opacos (crypto/rand)
@@ -630,9 +632,11 @@ ReverseShell/
 │   ├── agent/
 │   │   ├── beacon.go          # loop de sesión del implant
 │   │   └── executor.go        # + executor_test.go — shell / sysinfo
-│   └── console/
-│       ├── client.go          # cliente REST + lector SSE
-│       └── repl.go            # REPL del operador
+│   ├── console/
+│   │   ├── client.go          # cliente REST + lector SSE
+│   │   └── repl.go            # REPL del operador
+│   └── testutil/
+│       └── cert.go            # fixture de tests: cert TLS self-signed
 └── labs/                      # laboratorios desechables (gitignored si contienen IPs)
 ```
 
@@ -781,7 +785,7 @@ La consola lista la sesión y permite operarla:
 | **F0** | Completada | `go.mod`, `Makefile`, `.gitignore`, `config.example.toml`, CI con quality gates | `gofmt+vet+test -race+build` en verde desde el primer commit |
 | **F1** | Completada | MVP de los 4 componentes: agent + teamserver (listener TCP embebido) + operator API mínimo (`sessions`, `tasks`, `events`) + console (`sessions`/`exec`) | `whoami` de punta a punta **desde la console**, atravesando los 3 planos en loopback |
 | **F2** | Completada | Robustez de sesiones: HEARTBEAT/ACK, reconexión backoff+jitter, resume por nonce, STALE, audit JSONL completo, requeue de tasks, `exit` | Matar el agent y verlo retomar la misma sesión; la auditoría reproduce la sesión completa |
-| **F3** | Pendiente | Hardening: TLS en plano de sesiones, HMAC del implant, TLS+token del operator API fuera de loopback | Conexión sin credenciales rechazada y auditada en ambos planos |
+| **F3** | Completada | Hardening: TLS en plano de sesiones, HMAC del implant, TLS+token del operator API fuera de loopback | Conexión sin credenciales rechazada y auditada en ambos planos |
 | **F4** | Pendiente | Transport HTTP(S) del implant + `cmd/listener` remoto (relay sobre TLS) | Un listener remoto en otro host del laboratorio alimenta al teamserver central |
 | **F5** | Pendiente | `upload`/`download` con troceado+checksum, persistencia de tasks, multi-operador, web frontend (React/Vue) sobre la misma API | Archivo íntegro verificado por hash; dos operadores concurrentes sin interferirse |
 

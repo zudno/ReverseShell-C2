@@ -17,8 +17,15 @@ import (
 func (s *Server) handleConn(ctx context.Context, conn transport.Conn) {
 	defer conn.Close()
 
-	info, ok := s.expectRegister(ctx, conn)
+	info, ts, ok := s.expectRegister(ctx, conn)
 	if !ok {
+		return
+	}
+	if s.cfg.AuthToken != "" && !protocol.ValidRegisterMAC(s.cfg.AuthToken, info, ts, info.Auth) {
+		s.audit.LogAttrs(context.Background(), slog.LevelWarn, "session.auth.failed",
+			slog.String("src", conn.RemoteAddr()),
+			slog.String("hostname", info.Hostname))
+		s.reject(ctx, conn, protocol.ErrCodeAuthFailed, "invalid registration mac")
 		return
 	}
 	sid, resumed, err := s.resolveSession(info.Nonce)
@@ -147,22 +154,23 @@ func (s *Server) resolveSession(nonce string) (sid string, resumed bool, err err
 }
 
 // expectRegister consumes the first frame and validates it as a REGISTER.
-func (s *Server) expectRegister(ctx context.Context, conn transport.Conn) (protocol.AgentInfo, bool) {
+// It returns the agent identity and the envelope timestamp (the HMAC input).
+func (s *Server) expectRegister(ctx context.Context, conn transport.Conn) (protocol.AgentInfo, float64, bool) {
 	frame, err := conn.Recv(ctx)
 	if err != nil {
-		return protocol.AgentInfo{}, false
+		return protocol.AgentInfo{}, 0, false
 	}
 	env, err := protocol.Decode(frame)
 	if err != nil || env.Type != protocol.TypeRegister {
 		s.reject(ctx, conn, protocol.ErrCodeBadEnvelope, "expected REGISTER")
-		return protocol.AgentInfo{}, false
+		return protocol.AgentInfo{}, 0, false
 	}
 	var info protocol.AgentInfo
 	if err := json.Unmarshal(env.Data, &info); err != nil || info.Nonce == "" {
 		s.reject(ctx, conn, protocol.ErrCodeBadEnvelope, "malformed agent_info")
-		return protocol.AgentInfo{}, false
+		return protocol.AgentInfo{}, 0, false
 	}
-	return info, true
+	return info, env.TS, true
 }
 
 // sendRegistered confirms the session and hands the agent its parameters.

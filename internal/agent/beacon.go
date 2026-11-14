@@ -36,6 +36,10 @@ type Config struct {
 	ReconnectBase time.Duration
 	ReconnectCap  time.Duration
 	Info          protocol.AgentInfo // identity sent in REGISTER (Nonce drives session resume)
+	AuthToken     string             // shared implant secret: HMAC in REGISTER (empty = auth disabled)
+	TLSCA         string             // session-plane TLS: CA bundle to verify the listener
+	TLSServerName string             // session-plane TLS: SNI / verification name
+	TLSInsecure   bool               // session-plane TLS: skip verification (lab only, warned)
 }
 
 // Run connects, serves, and reconnects until a deliberate stop: BYE from
@@ -48,6 +52,9 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if maxDelay <= 0 {
 		maxDelay = defaultReconnectCap
+	}
+	if cfg.TLSInsecure {
+		fmt.Fprintln(os.Stderr, "agent: WARNING — TLS certificate verification is DISABLED (insecure); lab use only")
 	}
 
 	for attempt := 0; ; attempt++ {
@@ -75,7 +82,12 @@ func runOnce(ctx context.Context, cfg Config) (clean bool, err error) {
 	if err != nil {
 		return true, err // configuration problem: reconnecting cannot fix it
 	}
-	conn, err := tr.Dial(ctx, cfg.Addr, transport.Options{MaxFrameBytes: cfg.MaxFrameBytes})
+	conn, err := tr.Dial(ctx, cfg.Addr, transport.Options{
+		MaxFrameBytes:      cfg.MaxFrameBytes,
+		CAFile:             cfg.TLSCA,
+		ServerName:         cfg.TLSServerName,
+		InsecureSkipVerify: cfg.TLSInsecure,
+	})
 	if err != nil {
 		return false, fmt.Errorf("dial listener: %w", err)
 	}
@@ -96,7 +108,11 @@ func runOnce(ctx context.Context, cfg Config) (clean bool, err error) {
 	b := &beaconConn{conn: conn}
 
 	reg := protocol.NewEnvelope(protocol.TypeRegister)
-	data, err := json.Marshal(cfg.Info)
+	info := cfg.Info
+	if cfg.AuthToken != "" {
+		info.Auth = protocol.RegisterMAC(cfg.AuthToken, info, reg.TS)
+	}
+	data, err := json.Marshal(info)
 	if err != nil {
 		return true, fmt.Errorf("marshal agent info: %w", err)
 	}

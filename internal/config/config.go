@@ -23,6 +23,7 @@ type Config struct {
 	Agent      Agent      `toml:"agent"`
 	Auth       Auth       `toml:"auth"`
 	Audit      Audit      `toml:"audit"`
+	TLS        TLS        `toml:"tls"`
 }
 
 // Teamserver holds operator API settings.
@@ -30,6 +31,8 @@ type Teamserver struct {
 	APIHost       string `toml:"api_host"`
 	APIPort       int    `toml:"api_port"`
 	OperatorToken string `toml:"operator_token"`
+	APICert       string `toml:"api_cert"`
+	APIKey        string `toml:"api_key"`
 }
 
 // Listener holds the embedded session listener settings.
@@ -64,6 +67,15 @@ type Auth struct {
 // Audit holds audit log settings.
 type Audit struct {
 	Log string `toml:"log"`
+}
+
+// TLS holds session-plane TLS settings (transport "tls").
+type TLS struct {
+	Cert       string `toml:"cert"`        // listener side: server certificate
+	Key        string `toml:"key"`         // listener side: server key
+	CA         string `toml:"ca"`          // agent side: CA bundle to verify the listener
+	ServerName string `toml:"server_name"` // agent side: SNI / verification name
+	Insecure   bool   `toml:"insecure"`    // agent side, lab only: skip verification
 }
 
 // Load reads path when present, then applies env overrides and defaults.
@@ -116,6 +128,10 @@ func applyEnvTo(v reflect.Value, prefix string) {
 		case reflect.Float64:
 			if n, err := strconv.ParseFloat(raw, 64); err == nil {
 				fv.SetFloat(n)
+			}
+		case reflect.Bool:
+			if v, err := strconv.ParseBool(raw); err == nil {
+				fv.SetBool(v)
 			}
 		}
 	}

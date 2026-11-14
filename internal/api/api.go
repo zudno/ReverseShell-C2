@@ -70,6 +70,10 @@ type Config struct {
 	Token   string // required bearer token
 	Backend Backend
 	Audit   *slog.Logger // optional: auth failures are audited too
+
+	// Control-plane TLS: required when Addr is not loopback (README §9.2).
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 // Server serves the operator API.
@@ -89,6 +93,11 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = "127.0.0.1:5555"
+	}
+	// The teamserver is the crown jewel: exposing the operator API off
+	// loopback without TLS is a hard error, not a warning (README §9.2).
+	if !isLoopbackAddr(cfg.Addr) && (cfg.TLSCertFile == "" || cfg.TLSKeyFile == "") {
+		return nil, errors.New("api: exposing the operator API off-loopback requires TLS — set api_cert/api_key")
 	}
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -111,7 +120,15 @@ func (s *Server) Close() error { return s.ln.Close() }
 // Run serves until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
-	go func() { errCh <- s.srv.Serve(s.ln) }()
+	go func() {
+		var err error
+		if s.cfg.TLSCertFile != "" {
+			err = s.srv.ServeTLS(s.ln, s.cfg.TLSCertFile, s.cfg.TLSKeyFile)
+		} else {
+			err = s.srv.Serve(s.ln)
+		}
+		errCh <- err
+	}()
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -245,6 +262,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleShutdown(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "shutting down"})
 	_ = s.cfg.Backend.Shutdown(context.Background())
+}
+
+// isLoopbackAddr reports whether addr binds a loopback interface.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -12,6 +12,7 @@ type AgentInfo struct {
 	PID           int    `json:"pid"`
 	ClientVersion string `json:"client_version"`
 	Nonce         string `json:"nonce"`
+	Auth          string `json:"auth,omitempty"` // HMAC-SHA256(token, nonce|hostname|ts) — README §9.2
 }
 
 // SessionConfig is the REGISTERED payload the teamserver hands to the agent.

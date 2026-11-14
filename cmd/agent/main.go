@@ -63,6 +63,10 @@ func main() {
 		MaxFrameBytes: protocol.DefaultMaxFrameBytes,
 		ReconnectBase: time.Duration(cfg.Agent.ReconnectBase * float64(time.Second)),
 		ReconnectCap:  time.Duration(cfg.Agent.ReconnectCap * float64(time.Second)),
+		AuthToken:     cfg.Auth.ImplantToken,
+		TLSCA:         cfg.TLS.CA,
+		TLSServerName: cfg.TLS.ServerName,
+		TLSInsecure:   cfg.TLS.Insecure,
 		Info: protocol.AgentInfo{
 			Hostname:      hostname,
 			OS:            runtime.GOOS,

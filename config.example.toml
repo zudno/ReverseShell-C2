@@ -6,6 +6,8 @@
 api_host = "127.0.0.1"     # bind del operator API — loopback por defecto
 api_port = 5555
 operator_token = "<openssl rand -hex 32>"   # bearer token del plano de control
+# api_cert = "certs/api-cert.pem"   # TLS del operator API — OBLIGATORIO si api_host no es loopback
+# api_key  = "certs/api-key.pem"
 
 [listener]                 # listener embebido en el teamserver
 host = "127.0.0.1"         # bind de sesiones — loopback por defecto
@@ -25,8 +27,19 @@ transport = "tcp"
 reconnect_base = 1.0       # segundos (backoff exponencial)
 reconnect_cap = 300.0
 
-[auth]                     # fase 3 — HMAC del implant; deshabilitado si ausente
-# implant_token = "<openssl rand -hex 32>"
+[auth]                     # HMAC del implant en REGISTER; deshabilitado si ausente
+# implant_token = "<openssl rand -hex 32>"   # mismo valor en teamserver y agent
+
+# Cert de laboratorio (self-signed, SAN 127.0.0.1/localhost):
+#   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+#     -keyout certs/server-key.pem -out certs/server-cert.pem -days 30 -nodes \
+#     -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+[tls]                      # solo aplica con transport = "tls"
+# cert = "certs/server-cert.pem"     # lado listener
+# key  = "certs/server-key.pem"      # lado listener
+# ca   = "certs/server-cert.pem"     # lado agent: CA para verificar al listener
+# server_name = "127.0.0.1"          # SNI del listener (default: host de connect_host)
+# insecure = false                   # SOLO laboratorio: saltar verificación (advertido)
 
 [audit]
 log = "logs/audit.jsonl"

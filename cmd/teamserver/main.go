@@ -63,6 +63,9 @@ func main() {
 		MaxFrameBytes:   cfg.Listener.MaxFrameBytes,
 		AuditLogPath:    cfg.Audit.Log,
 		StaleMultiplier: cfg.Session.StaleMultiplier,
+		TLSCertFile:     cfg.TLS.Cert,
+		TLSKeyFile:      cfg.TLS.Key,
+		AuthToken:       cfg.Auth.ImplantToken,
 		SessionCfg: protocol.SessionConfig{
 			HeartbeatInterval: cfg.Session.HeartbeatInterval,
 			HeartbeatJitter:   cfg.Session.HeartbeatJitter,
@@ -73,10 +76,12 @@ func main() {
 		fail(err)
 	}
 	apiSrv, err := api.New(api.Config{
-		Addr:    net.JoinHostPort(cfg.Teamserver.APIHost, strconv.Itoa(cfg.Teamserver.APIPort)),
-		Token:   cfg.Teamserver.OperatorToken,
-		Backend: srv,
-		Audit:   srv.Audit(),
+		Addr:        net.JoinHostPort(cfg.Teamserver.APIHost, strconv.Itoa(cfg.Teamserver.APIPort)),
+		Token:       cfg.Teamserver.OperatorToken,
+		Backend:     srv,
+		Audit:       srv.Audit(),
+		TLSCertFile: cfg.Teamserver.APICert,
+		TLSKeyFile:  cfg.Teamserver.APIKey,
 	})
 	if err != nil {
 		fail(err)

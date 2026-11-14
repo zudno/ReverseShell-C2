@@ -28,6 +28,14 @@ type Config struct {
 	AuditLogPath    string
 	StaleMultiplier float64 // × heartbeat_interval without signal → STALE
 	SessionCfg      protocol.SessionConfig
+
+	// Session-plane TLS (transport "tls"): certificate served by the listener.
+	TLSCertFile string
+	TLSKeyFile  string
+
+	// AuthToken is the shared implant secret: when set, every REGISTER
+	// must carry a valid HMAC (README §9.2). Empty = auth disabled.
+	AuthToken string
 }
 
 // Server is the teamserver core. It implements api.Backend.
@@ -85,7 +93,11 @@ func New(cfg Config) (*Server, error) {
 		audit.LogAttrs(context.Background(), slog.LevelWarn, "listener.nonloopback",
 			slog.String("bind", cfg.ListenerAddr))
 	}
-	l, err := tr.Listen(context.Background(), cfg.ListenerAddr, transport.Options{MaxFrameBytes: cfg.MaxFrameBytes})
+	l, err := tr.Listen(context.Background(), cfg.ListenerAddr, transport.Options{
+		MaxFrameBytes: cfg.MaxFrameBytes,
+		CertFile:      cfg.TLSCertFile,
+		KeyFile:       cfg.TLSKeyFile,
+	})
 	if err != nil {
 		_ = af.Close()
 		return nil, err

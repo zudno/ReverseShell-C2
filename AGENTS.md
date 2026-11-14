@@ -42,13 +42,15 @@ in-scope alternative instead of implementing it.
 
 ## Project status
 
-Early-stage. F0–F2 are landed: the four components (agent, teamserver, console, and
-a standalone-listener placeholder) build and pass the quality gates. The session
-plane speaks the wire protocol with heartbeats, backoff+jitter reconnection,
-nonce-based session resume, STALE sweeping, and a full audit trail. The sections
-below describe the conventions the code follows — when reality drifts from this
-file, update the file (prefer opencode's `/init` or edit in place rather than
-rewriting wholesale).
+Early-stage. F0–F3 are landed: the four components (agent, teamserver, console,
+and a standalone-listener placeholder) build and pass the quality gates. The
+session plane speaks the wire protocol with heartbeats, backoff+jitter
+reconnection, nonce-based session resume, STALE sweeping, and a full audit
+trail; it optionally runs over TLS and authenticates agents with a shared-secret
+HMAC (`AUTH_FAILED` rejections are audited). The operator API enforces TLS when
+bound off-loopback. The sections below describe the conventions the code
+follows — when reality drifts from this file, update the file (prefer opencode's
+`/init` or edit in place rather than rewriting wholesale).
 
 ---
 

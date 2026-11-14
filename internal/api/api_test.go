@@ -3,13 +3,17 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"reverseshell/internal/protocol"
+	"reverseshell/internal/testutil"
 )
 
 type fakeBackend struct {
@@ -37,6 +41,63 @@ func (b *fakeBackend) SubscribeEvents() (<-chan Event, func()) {
 }
 
 func (b *fakeBackend) Shutdown(context.Context) error { return nil }
+
+// TestNonLoopbackRequiresTLS: exposing the operator API off-loopback without
+// TLS is a hard startup error (README §9.2).
+func TestNonLoopbackRequiresTLS(t *testing.T) {
+	_, err := New(Config{
+		Addr:    "0.0.0.0:5555",
+		Token:   "secret",
+		Backend: &fakeBackend{events: make(chan Event, 1)},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-loopback bind without TLS")
+	}
+}
+
+// TestAPIServesTLS proves the control plane serves real TLS when configured.
+func TestAPIServesTLS(t *testing.T) {
+	certPath, keyPath := testutil.WriteTLSCert(t)
+	s, err := New(Config{
+		Addr:        "127.0.0.1:0",
+		Token:       "secret",
+		Backend:     &fakeBackend{events: make(chan Event, 1)},
+		TLSCertFile: certPath,
+		TLSKeyFile:  keyPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	pool := x509.NewCertPool()
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		t.Fatal("bad cert PEM")
+	}
+	client := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+	}}
+	req, _ := http.NewRequest(http.MethodGet, "https://"+s.Addr()+"/v1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("https request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.TLS == nil {
+		t.Fatal("connection is not TLS")
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
 
 func newTestServer(t *testing.T, b Backend) *httptest.Server {
 	t.Helper()
