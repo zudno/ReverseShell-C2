@@ -78,6 +78,7 @@ func main() {
 		RelayToken:      cfg.Relay.Token,
 		RelayCertFile:   cfg.Relay.Cert,
 		RelayKeyFile:    cfg.Relay.Key,
+		TaskStorePath:   cfg.Tasks.Store,
 		SessionCfg: protocol.SessionConfig{
 			HeartbeatInterval: cfg.Session.HeartbeatInterval,
 			HeartbeatJitter:   cfg.Session.HeartbeatJitter,

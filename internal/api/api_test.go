@@ -3,9 +3,12 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,23 +20,47 @@ import (
 )
 
 type fakeBackend struct {
-	sessions []SessionView
-	tasks    map[string]TaskView
-	events   chan Event
+	sessions   []SessionView
+	tasks      map[string]TaskView
+	events     chan Event
+	lastOp     string
+	uploadView UploadView
+	uploadData map[string][]byte // tid → payload
 }
 
 func (b *fakeBackend) Sessions() []SessionView { return b.sessions }
 
-func (b *fakeBackend) CreateTask(_ context.Context, sid string, _ protocol.TaskSpec) (string, error) {
+func (b *fakeBackend) CreateTask(_ context.Context, sid string, _ protocol.TaskSpec, operator string) (string, error) {
+	b.lastOp = operator
 	if sid == "missing" {
 		return "", ErrUnknownSession
 	}
 	return "t-1", nil
 }
 
+func (b *fakeBackend) CreateUpload(_ context.Context, sid, _ string, data []byte, operator string) (UploadView, error) {
+	b.lastOp = operator
+	if sid == "missing" {
+		return UploadView{}, ErrUnknownSession
+	}
+	sum := sha256.Sum256(data)
+	b.uploadView = UploadView{FinalTID: "t-up", Chunks: 1, Bytes: len(data),
+		SHA256: hex.EncodeToString(sum[:])}
+	return b.uploadView, nil
+}
+
 func (b *fakeBackend) Task(tid string) (TaskView, bool) {
 	v, ok := b.tasks[tid]
 	return v, ok
+}
+
+func (b *fakeBackend) TaskData(tid string) ([]byte, string, bool) {
+	data, ok := b.uploadData[tid]
+	if !ok {
+		return nil, "", false
+	}
+	sum := sha256.Sum256(data)
+	return data, hex.EncodeToString(sum[:]), true
 }
 
 func (b *fakeBackend) SubscribeEvents() (<-chan Event, func()) {
@@ -96,6 +123,134 @@ func TestAPIServesTLS(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+// TestOperatorHeaderThreadsIdentity: X-RS-Operator reaches the backend for
+// audit attribution (multi-operator accountability, F5).
+func TestOperatorHeaderThreadsIdentity(t *testing.T) {
+	b := &fakeBackend{events: make(chan Event, 1)}
+	ts := newTestServer(t, b)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/sessions/sid/tasks",
+		strings.NewReader(`{"kind":"sysinfo"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("X-RS-Operator", "alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if b.lastOp != "alice" {
+		t.Fatalf("operator = %q, want alice", b.lastOp)
+	}
+}
+
+func TestUploadEndpoint(t *testing.T) {
+	b := &fakeBackend{events: make(chan Event, 1)}
+	ts := newTestServer(t, b)
+
+	// Missing path → 400.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/sessions/sid/upload", strings.NewReader("x"))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing path = %d, want 400", resp.StatusCode)
+	}
+
+	// Happy path → 202 with the upload view.
+	payload := []byte("file-content")
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/sessions/sid/upload?path=/tmp/blob",
+		strings.NewReader(string(payload)))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("upload = %d, want 202", resp.StatusCode)
+	}
+	var view UploadView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	if view.FinalTID != "t-up" || view.Bytes != len(payload) ||
+		view.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("view = %+v", view)
+	}
+}
+
+func TestTaskDownloadEndpoint(t *testing.T) {
+	b := &fakeBackend{
+		events:     make(chan Event, 1),
+		uploadData: map[string][]byte{"t-dl": []byte("exfiltrated-bytes")},
+	}
+	ts := newTestServer(t, b)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/tasks/t-dl/download", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "exfiltrated-bytes" {
+		t.Fatalf("body = %q", body)
+	}
+	if resp.Header.Get("X-RS-SHA256") == "" {
+		t.Fatal("X-RS-SHA256 header missing")
+	}
+
+	// Unknown tid → 404.
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/v1/tasks/nope/download", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing download = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestUIServedAndRedirected: the single-file web console is served at /ui
+// and / redirects to it (README §5, F5).
+func TestUIServedAndRedirected(t *testing.T) {
+	ts := newTestServer(t, &fakeBackend{events: make(chan Event, 1)})
+
+	resp, err := http.Get(ts.URL + "/ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/ui = %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "operator console") {
+		t.Fatalf("/ui does not look like the web console:\n%.200s", body)
+	}
+
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err = noRedirect.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/ui" {
+		t.Fatalf("/ = %d %q, want 302 /ui", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
 
@@ -172,6 +327,9 @@ func TestCreateTaskValidation(t *testing.T) {
 		{"shell ok", `{"kind":"shell","args":{"cmd":"whoami"}}`, http.StatusAccepted},
 		{"sysinfo ok", `{"kind":"sysinfo"}`, http.StatusAccepted},
 		{"exit ok", `{"kind":"exit"}`, http.StatusAccepted},
+		{"download without path", `{"kind":"download"}`, http.StatusBadRequest},
+		{"download ok", `{"kind":"download","args":{"path":"/tmp/x"}}`, http.StatusAccepted},
+		{"upload on tasks endpoint", `{"kind":"upload","args":{"path":"/x"}}`, http.StatusBadRequest},
 		{"negative timeout", `{"kind":"sysinfo","timeout":-1}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {

@@ -31,9 +31,17 @@ type TaskSpec struct {
 
 // Task kinds (README §4.5).
 const (
-	KindShell   = "shell"
-	KindSysinfo = "sysinfo"
-	KindExit    = "exit"
+	KindShell    = "shell"
+	KindSysinfo  = "sysinfo"
+	KindExit     = "exit"
+	KindUpload   = "upload"
+	KindDownload = "download"
+)
+
+// Transfer limits (README §4.5): raw bytes per chunk and per-file cap.
+const (
+	TransferChunkBytes = 1 << 20  // 1 MiB raw per chunk
+	MaxTransferBytes   = 64 << 20 // 64 MiB per file
 )
 
 // ShellArgs is the args payload of a shell task.
@@ -41,14 +49,43 @@ type ShellArgs struct {
 	Cmd string `json:"cmd"`
 }
 
+// DownloadArgs is the args payload of a download task.
+type DownloadArgs struct {
+	Path string `json:"path"`
+}
+
+// UploadArgs is the args payload of one upload chunk task. Chunks are
+// offset-addressed, so arrival order does not matter.
+type UploadArgs struct {
+	Path       string `json:"path"`
+	Offset     int64  `json:"offset"`
+	Index      int64  `json:"index"`       // this chunk's index (0-based)
+	Total      int64  `json:"total"`       // total chunk count
+	TotalBytes int64  `json:"total_bytes"` // complete-file size
+	SHA256     string `json:"sha256"`      // complete-file hash
+	Data       string `json:"data"`        // base64 chunk
+	Final      bool   `json:"final"`       // last chunk: verify + rename
+}
+
+// ChunkMeta marks a RESULT as one chunk of a chunked transfer; SHA256 (the
+// complete-file hash) is present on the final chunk only.
+type ChunkMeta struct {
+	Index  int    `json:"i"`
+	Total  int    `json:"n"`
+	SHA256 string `json:"sha256,omitempty"`
+	Final  bool   `json:"final"`
+}
+
 // TaskResult is the RESULT payload.
 type TaskResult struct {
-	Status     string `json:"status"`
-	ExitCode   int    `json:"exit_code,omitempty"`
-	Stdout     string `json:"stdout,omitempty"`
-	Stderr     string `json:"stderr,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	DurationMS int64  `json:"duration_ms"`
+	Status     string     `json:"status"`
+	ExitCode   int        `json:"exit_code,omitempty"`
+	Stdout     string     `json:"stdout,omitempty"`
+	Stderr     string     `json:"stderr,omitempty"`
+	Detail     string     `json:"detail,omitempty"`
+	DurationMS int64      `json:"duration_ms"`
+	Data       string     `json:"data,omitempty"` // base64 chunk (chunked transfers)
+	Chunk      *ChunkMeta `json:"chunk,omitempty"`
 }
 
 // Result statuses (README §4.3).

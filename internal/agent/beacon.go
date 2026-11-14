@@ -163,22 +163,21 @@ func runOnce(ctx context.Context, cfg Config) (clean bool, err error) {
 		switch env.Type {
 		case protocol.TypeTask:
 			var spec protocol.TaskSpec
-			var res protocol.TaskResult
+			var results []protocol.TaskResult
 			if err := json.Unmarshal(env.Data, &spec); err != nil {
-				res = protocol.TaskResult{Status: protocol.StatusError, Detail: "bad task spec: " + err.Error()}
+				results = []protocol.TaskResult{{
+					Status: protocol.StatusError, Detail: "bad task spec: " + err.Error(),
+				}}
+			} else if spec.Kind == protocol.KindDownload {
+				// Downloads stream several chunked RESULTs under one tid.
+				results = downloadResults(spec)
 			} else {
-				res = ExecuteTask(sctx, spec, cfg.Info)
+				results = []protocol.TaskResult{ExecuteTask(sctx, spec, cfg.Info)}
 			}
-			out := protocol.NewEnvelope(protocol.TypeResult)
-			out.SID = sid
-			out.TID = env.TID
-			rd, err := json.Marshal(res)
-			if err != nil {
-				return true, fmt.Errorf("marshal result: %w", err)
-			}
-			out.Data = rd
-			if err := b.send(sctx, out); err != nil {
-				return false, fmt.Errorf("send result: %w", err)
+			for _, res := range results {
+				if err := b.sendResult(sctx, sid, env.TID, res); err != nil {
+					return false, fmt.Errorf("send result: %w", err)
+				}
 			}
 			if spec.Kind == protocol.KindExit {
 				return true, nil // result flushed; deliberate shutdown
@@ -209,6 +208,19 @@ func (b *beaconConn) send(ctx context.Context, env *protocol.Envelope) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return sendEnvelope(ctx, b.conn, env)
+}
+
+// sendResult wraps one task result in a RESULT envelope and sends it.
+func (b *beaconConn) sendResult(ctx context.Context, sid, tid string, res protocol.TaskResult) error {
+	out := protocol.NewEnvelope(protocol.TypeResult)
+	out.SID = sid
+	out.TID = tid
+	rd, err := json.Marshal(res)
+	if err != nil {
+		return fmt.Errorf("marshal result: %w", err)
+	}
+	out.Data = rd
+	return b.send(ctx, out)
 }
 
 // heartbeat emits HEARTBEAT every interval ± jitter until ctx is done. A

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"os/user"
 	"strconv"
 	"syscall"
 
@@ -18,9 +19,10 @@ import (
 
 func main() {
 	var (
-		cfgPath = flag.String("config", "config.toml", "path to TOML config (optional)")
-		server  = flag.String("server", "", "operator API address host:port (overrides config)")
-		token   = flag.String("token", "", "operator bearer token (overrides config/env)")
+		cfgPath  = flag.String("config", "config.toml", "path to TOML config (optional)")
+		server   = flag.String("server", "", "operator API address host:port (overrides config)")
+		token    = flag.String("token", "", "operator bearer token (overrides config/env)")
+		operator = flag.String("operator", "", "operator name for audit attribution (default: user@host)")
 	)
 	flag.Parse()
 
@@ -48,7 +50,18 @@ func main() {
 		os.Exit(0)
 	}()
 
-	repl := console.NewREPL(console.NewClient(addr, cfg.Teamserver.OperatorToken))
+	op := *operator
+	if op == "" {
+		u, uerr := user.Current()
+		hn, _ := os.Hostname()
+		if uerr == nil {
+			op = u.Username + "@" + hn
+		} else {
+			op = "console@" + hn
+		}
+	}
+
+	repl := console.NewREPL(console.NewClient(addr, cfg.Teamserver.OperatorToken, op))
 	if err := repl.Run(context.Background()); err != nil {
 		fail(err)
 	}

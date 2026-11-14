@@ -44,6 +44,11 @@ type Config struct {
 	RelayToken    string
 	RelayCertFile string
 	RelayKeyFile  string
+
+	// TaskStorePath persists task records and session resume nonces as
+	// JSONL so pending tasks re-deliver after a restart (README §15, F5).
+	// Empty = persistence disabled.
+	TaskStorePath string
 }
 
 // Server is the teamserver core. It implements api.Backend.
@@ -58,6 +63,7 @@ type Server struct {
 	tr         transport.Transport
 	listener   transport.Listener
 	relay      *relay.Server
+	store      *store
 
 	wg     sync.WaitGroup
 	mu     sync.Mutex
@@ -111,6 +117,27 @@ func New(cfg Config) (*Server, error) {
 		_ = af.Close()
 		return nil, err
 	}
+	var (
+		st           *store
+		preloadNonce = make(map[string]string)
+		preloadTasks = make(map[string]*storedTask)
+	)
+	if cfg.TaskStorePath != "" {
+		var err error
+		st, err = openStore(cfg.TaskStorePath)
+		if err != nil {
+			_ = af.Close()
+			_ = l.Close()
+			return nil, err
+		}
+		preloadNonce, preloadTasks, err = loadStore(cfg.TaskStorePath)
+		if err != nil {
+			_ = st.close()
+			_ = af.Close()
+			_ = l.Close()
+			return nil, fmt.Errorf("load task store: %w", err)
+		}
+	}
 	s := &Server{
 		cfg:       cfg,
 		audit:     audit,
@@ -122,8 +149,12 @@ func New(cfg Config) (*Server, error) {
 		listener:  l,
 		conns:     make(map[string]transport.Conn),
 		nonces:    make(map[string]string),
+		store:     st,
 	}
-	s.dispatcher = NewDispatcher(s.registry, audit, s.events)
+	s.dispatcher = NewDispatcher(s.registry, audit, s.events, st, preloadTasks)
+	for n, sid := range preloadNonce {
+		s.nonces[n] = sid
+	}
 	if cfg.RelayAddr != "" {
 		if cfg.RelayToken == "" || cfg.RelayCertFile == "" || cfg.RelayKeyFile == "" {
 			_ = af.Close()
@@ -206,6 +237,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.wg.Wait()
 
+	if s.store != nil {
+		_ = s.store.close()
+	}
 	s.audit.LogAttrs(context.Background(), slog.LevelInfo, "server.stop")
 	_ = s.auditFile.Close()
 	return nil
@@ -255,8 +289,8 @@ func (s *Server) Sessions() []api.SessionView {
 }
 
 // CreateTask implements api.Backend.
-func (s *Server) CreateTask(ctx context.Context, sid string, spec protocol.TaskSpec) (string, error) {
-	tid, err := s.dispatcher.CreateTask(ctx, sid, spec)
+func (s *Server) CreateTask(ctx context.Context, sid string, spec protocol.TaskSpec, operator string) (string, error) {
+	tid, err := s.dispatcher.CreateTask(ctx, sid, spec, operator)
 	switch {
 	case err == nil:
 		return tid, nil
@@ -267,6 +301,28 @@ func (s *Server) CreateTask(ctx context.Context, sid string, spec protocol.TaskS
 	default:
 		return "", err
 	}
+}
+
+// CreateUpload implements api.Backend: chunked operator→agent file push.
+func (s *Server) CreateUpload(ctx context.Context, sid, path string, data []byte, operator string) (api.UploadView, error) {
+	view, err := s.dispatcher.CreateUpload(ctx, sid, path, data, operator)
+	switch {
+	case err == nil:
+		return view, nil
+	case errors.Is(err, session.ErrNotFound):
+		return view, fmt.Errorf("%w: %s", api.ErrUnknownSession, sid)
+	case errors.Is(err, ErrSessionQueueFull):
+		return view, api.ErrSessionBusy
+	case errors.Is(err, ErrTransferTooLarge):
+		return view, api.ErrTransferTooLarge
+	default:
+		return view, err
+	}
+}
+
+// TaskData implements api.Backend.
+func (s *Server) TaskData(tid string) ([]byte, string, bool) {
+	return s.dispatcher.TaskData(tid)
 }
 
 // Task implements api.Backend.

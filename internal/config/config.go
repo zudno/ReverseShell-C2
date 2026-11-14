@@ -25,6 +25,12 @@ type Config struct {
 	Audit      Audit      `toml:"audit"`
 	TLS        TLS        `toml:"tls"`
 	Relay      Relay      `toml:"relay"`
+	Tasks      Tasks      `toml:"tasks"`
+}
+
+// Tasks holds the persistent task-queue settings (F5).
+type Tasks struct {
+	Store string `toml:"store"`
 }
 
 // Teamserver holds operator API settings.
@@ -199,5 +205,8 @@ func applyDefaults(c *Config) {
 	}
 	if c.Relay.Port != 0 && c.Relay.Host == "" {
 		c.Relay.Host = "127.0.0.1"
+	}
+	if c.Tasks.Store == "" {
+		c.Tasks.Store = "logs/tasks.jsonl"
 	}
 }

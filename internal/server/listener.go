@@ -150,6 +150,14 @@ func (s *Server) resolveSession(nonce string) (sid string, resumed bool, err err
 		return known, true, nil
 	}
 	s.nonces[nonce] = fresh
+	if s.store != nil {
+		// Survive restarts: a reconnecting agent retakes its session and
+		// its pending tasks (README §4.7, F5).
+		if err := s.store.appendLine(storeLine{Type: "session", SID: fresh, Nonce: nonce}); err != nil {
+			s.audit.LogAttrs(context.Background(), slog.LevelWarn, "task.store.error",
+				slog.String("error", err.Error()))
+		}
+	}
 	return fresh, false, nil
 }
 

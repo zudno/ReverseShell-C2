@@ -50,5 +50,8 @@ reconnect_cap = 300.0
 # ca   = "certs/relay-cert.pem"      # listener remoto: CA para verificar al teamserver
 # insecure = false                   # listener remoto: SOLO laboratorio
 
+[tasks]                    # cola de tasks persistente (F5): sobrevive restarts del teamserver
+store = "logs/tasks.jsonl" # los uploads pendientes se re-entregan cuando el agent retoma su sesión
+
 [audit]
 log = "logs/audit.jsonl"

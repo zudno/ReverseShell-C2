@@ -42,17 +42,20 @@ in-scope alternative instead of implementing it.
 
 ## Project status
 
-Early-stage. F0–F4 are landed: the four components (agent, teamserver, console,
-and the standalone remote listener) build and pass the quality gates. The
-session plane speaks the wire protocol with heartbeats, backoff+jitter
-reconnection, nonce-based session resume, STALE sweeping, and a full audit
-trail; it runs over tcp, tls, or http(s) polling, optionally authenticates
-agents with a shared-secret HMAC (`AUTH_FAILED` rejections are audited), and
-the operator API enforces TLS when bound off-loopback. Remote listeners feed
-the teamserver over an authenticated TLS relay plane. The sections below
-describe the conventions the code follows — when reality drifts from this
-file, update the file (prefer opencode's `/init` or edit in place rather than
-rewriting wholesale).
+Feature-complete against the roadmap. F0–F5 are landed: the four components
+(agent, teamserver, console, and the standalone remote listener) build and
+pass the quality gates. The session plane speaks the wire protocol with
+heartbeats, backoff+jitter reconnection, nonce-based session resume, STALE
+sweeping, and a full audit trail; it runs over tcp, tls, or http(s) polling,
+authenticates agents with a shared-secret HMAC (`AUTH_FAILED` rejections are
+audited), and remote listeners feed the teamserver over an authenticated TLS
+relay plane. The task queue and session-resume map persist across restarts,
+file transfers are chunked and sha256-verified in both directions, and
+operators work concurrently (CLI or the bundled single-file web console on
+/ui) with per-operator audit attribution. The sections below describe the
+conventions the code follows — when reality drifts from this file, update
+the file (prefer opencode's `/init` or edit in place rather than rewriting
+wholesale).
 
 ---
 

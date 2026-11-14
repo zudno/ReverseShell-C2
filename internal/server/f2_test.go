@@ -23,8 +23,17 @@ import (
 // API on ephemeral loopback ports with the shared test token. It returns
 // the server, the httptest endpoint, and the audit log path.
 func startStack(t *testing.T, ctx context.Context, cfg server.Config) (*server.Server, *httptest.Server, string) {
+	srv, ts, auditPath, _ := startStackDone(t, ctx, cfg)
+	return srv, ts, auditPath
+}
+
+// startStackDone additionally returns the server Run's done channel and
+// respects a preset ListenerAddr (the F5 restart test reuses the port).
+func startStackDone(t *testing.T, ctx context.Context, cfg server.Config) (*server.Server, *httptest.Server, string, <-chan error) {
 	t.Helper()
-	cfg.ListenerAddr = "127.0.0.1:0"
+	if cfg.ListenerAddr == "" {
+		cfg.ListenerAddr = "127.0.0.1:0"
+	}
 	if cfg.TransportName == "" {
 		cfg.TransportName = "tcp"
 	}
@@ -45,8 +54,9 @@ func startStack(t *testing.T, ctx context.Context, cfg server.Config) (*server.S
 	t.Cleanup(func() { _ = apiSrv.Close() })
 	ts := httptest.NewServer(apiSrv.Handler())
 	t.Cleanup(ts.Close)
-	go func() { _ = srv.Run(ctx) }()
-	return srv, ts, cfg.AuditLogPath
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx) }()
+	return srv, ts, cfg.AuditLogPath, done
 }
 
 func testAgentConfig(addr, nonce string) agent.Config {

