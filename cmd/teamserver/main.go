@@ -57,6 +57,14 @@ func main() {
 		fail(errors.New("operator token required: set [teamserver] operator_token in the config file, RS_TEAMSERVER_OPERATOR_TOKEN, or pass --token (generate: openssl rand -hex 32)"))
 	}
 
+	relayAddr := ""
+	if cfg.Relay.Port != 0 {
+		if cfg.Relay.Token == "" {
+			fail(errors.New("relay port set but no [relay] token — refusing to expose the relay plane unauthenticated"))
+		}
+		relayAddr = net.JoinHostPort(cfg.Relay.Host, strconv.Itoa(cfg.Relay.Port))
+	}
+
 	srv, err := server.New(server.Config{
 		TransportName:   cfg.Listener.Transport,
 		ListenerAddr:    net.JoinHostPort(cfg.Listener.Host, strconv.Itoa(cfg.Listener.Port)),
@@ -66,6 +74,10 @@ func main() {
 		TLSCertFile:     cfg.TLS.Cert,
 		TLSKeyFile:      cfg.TLS.Key,
 		AuthToken:       cfg.Auth.ImplantToken,
+		RelayAddr:       relayAddr,
+		RelayToken:      cfg.Relay.Token,
+		RelayCertFile:   cfg.Relay.Cert,
+		RelayKeyFile:    cfg.Relay.Key,
 		SessionCfg: protocol.SessionConfig{
 			HeartbeatInterval: cfg.Session.HeartbeatInterval,
 			HeartbeatJitter:   cfg.Session.HeartbeatJitter,
@@ -89,6 +101,9 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "teamserver: session listener %s (%s)\nteamserver: operator API http://%s\n",
 		srv.ListenAddr(), cfg.Listener.Transport, apiSrv.Addr())
+	if ra := srv.RelayAddr(); ra != "" {
+		fmt.Fprintf(os.Stderr, "teamserver: relay endpoint %s (TLS, token auth)\n", ra)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

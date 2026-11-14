@@ -42,15 +42,17 @@ in-scope alternative instead of implementing it.
 
 ## Project status
 
-Early-stage. F0–F3 are landed: the four components (agent, teamserver, console,
-and a standalone-listener placeholder) build and pass the quality gates. The
+Early-stage. F0–F4 are landed: the four components (agent, teamserver, console,
+and the standalone remote listener) build and pass the quality gates. The
 session plane speaks the wire protocol with heartbeats, backoff+jitter
 reconnection, nonce-based session resume, STALE sweeping, and a full audit
-trail; it optionally runs over TLS and authenticates agents with a shared-secret
-HMAC (`AUTH_FAILED` rejections are audited). The operator API enforces TLS when
-bound off-loopback. The sections below describe the conventions the code
-follows — when reality drifts from this file, update the file (prefer opencode's
-`/init` or edit in place rather than rewriting wholesale).
+trail; it runs over tcp, tls, or http(s) polling, optionally authenticates
+agents with a shared-secret HMAC (`AUTH_FAILED` rejections are audited), and
+the operator API enforces TLS when bound off-loopback. Remote listeners feed
+the teamserver over an authenticated TLS relay plane. The sections below
+describe the conventions the code follows — when reality drifts from this
+file, update the file (prefer opencode's `/init` or edit in place rather than
+rewriting wholesale).
 
 ---
 
@@ -73,7 +75,7 @@ ReverseShell/
 │   ├── agent/         # implant/beacon binary: connects back to the listener
 │   ├── teamserver/    # central server: embedded listener(s) + operator API + audit
 │   ├── console/       # operator CLI: talks to the teamserver operator API only
-│   └── listener/      # standalone remote listener (relay plane, later phase)
+│   └── listener/      # standalone remote listener: terminates implants, feeds the teamserver over relay
 ├── internal/
 │   ├── protocol/      # session-plane wire protocol: framing, envelope, types, errors
 │   ├── transport/     # pluggable session transports: tcp, tls, http(s) — one file each

@@ -24,6 +24,7 @@ type Config struct {
 	Auth       Auth       `toml:"auth"`
 	Audit      Audit      `toml:"audit"`
 	TLS        TLS        `toml:"tls"`
+	Relay      Relay      `toml:"relay"`
 }
 
 // Teamserver holds operator API settings.
@@ -76,6 +77,19 @@ type TLS struct {
 	CA         string `toml:"ca"`          // agent side: CA bundle to verify the listener
 	ServerName string `toml:"server_name"` // agent side: SNI / verification name
 	Insecure   bool   `toml:"insecure"`    // agent side, lab only: skip verification
+}
+
+// Relay holds the relay-plane settings (README §6.2): the teamserver binds
+// host:port when a token is set; a standalone listener dials the same
+// address with the same token.
+type Relay struct {
+	Host     string `toml:"host"`     // teamserver: relay bind host
+	Port     int    `toml:"port"`     // teamserver: 0 = relay plane disabled
+	Token    string `toml:"token"`    // shared with the remote listener
+	Cert     string `toml:"cert"`     // teamserver: TLS cert of the relay endpoint
+	Key      string `toml:"key"`      // teamserver: TLS key of the relay endpoint
+	CA       string `toml:"ca"`       // listener: CA to verify the teamserver
+	Insecure bool   `toml:"insecure"` // listener, lab only: skip verification
 }
 
 // Load reads path when present, then applies env overrides and defaults.
@@ -182,5 +196,8 @@ func applyDefaults(c *Config) {
 	}
 	if c.Audit.Log == "" {
 		c.Audit.Log = "logs/audit.jsonl"
+	}
+	if c.Relay.Port != 0 && c.Relay.Host == "" {
+		c.Relay.Host = "127.0.0.1"
 	}
 }

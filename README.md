@@ -446,9 +446,13 @@ TLS, reutilizando el framing length-prefix con mensajes de relay:
 
 | type | Dirección | Propósito |
 |---|---|---|
-| `LISTENER_HELLO` | L → T | Autenticación del listener con token propio |
-| `SESSION_UP` / `SESSION_DOWN` | L → T | Un implant conectó / cayó |
+| `LISTENER_HELLO` | L → T | Autenticación del listener (nombre + token compartido) |
+| `LISTENER_OK` / `LISTENER_ERROR` | T → L | Handshake aceptado / rechazado (token inválido, auditado) |
+| `SESSION_UP` | L → T | Un implant conectó al listener |
+| `SESSION_DOWN` | ambos | El implant cayó (L → T) o el teamserver cerró la sesión (T → L) |
 | `FRAME_RELAY` | ambos | Frame del plano de sesiones + `sid`, reenviado íntegro |
+
+Los mensajes de relay viajan con el mismo framing length-prefix del plano de sesiones; los frames de sesión viajan opacos dentro de `FRAME_RELAY`. Un listener comprometido solo expone las sesiones que terminan en él — no el estado central ni el operator API.
 
 El teamserver trata al listener remoto como **semi-confiable**: valida frames, limita
 tasas, y un listener comprometido solo expone las sesiones que terminan en él (no el
@@ -612,7 +616,8 @@ ReverseShell/
 │   │   ├── transport.go       # interfaces Conn / Listener / Transport + factoría
 │   │   ├── tcp.go             # + tcp_test.go
 │   │   ├── tls.go             # + tls_test.go — TLS sobre el framing compartido
-│   │   └── http.go            # F4
+│   │   ├── http.go            # + http_test.go — polling: POST /beacon + GET long-poll
+│   │   └── memory.go          # + memory_test.go — MemConn (backing de HTTP y relay)
 │   ├── session/
 │   │   ├── ids.go             # sid/tid/nonce opacos (crypto/rand)
 │   │   └── registry.go        # + registry_test.go — máquina de estados
@@ -628,7 +633,7 @@ ReverseShell/
 │   ├── api/
 │   │   └── api.go             # + api_test.go (httptest) — REST+SSE + auth bearer
 │   ├── relay/
-│   │   └── relay.go           # protocolo listener↔teamserver (F4)
+│   │   └── relay.go           # + relay_test.go — plano relay: HELLO, SESSION_UP/DOWN, FRAME_RELAY
 │   ├── agent/
 │   │   ├── beacon.go          # loop de sesión del implant
 │   │   └── executor.go        # + executor_test.go — shell / sysinfo
@@ -773,6 +778,17 @@ go run ./cmd/console --token <operator_token>
 La consola lista la sesión y permite operarla:
 `sessions → use 1 → exec whoami → sysinfo → back → shutdown` (ejemplo en §7).
 
+**Listener remoto standalone** (§6.2) — en otro host del laboratorio, alimentando al
+teamserver central por el plano de relay:
+
+```powershell
+# En el edge del laboratorio (requiere [relay] activo en el teamserver)
+go run ./cmd/listener --teamserver <teamserver-host>:5556 --token <relay-token> --name lab-edge
+
+# El agent apunta al listener remoto, no al teamserver
+go run ./cmd/agent --host <edge-host> --port 4444
+```
+
 > Para probar contra una segunda máquina, usa el skill `lab-setup`: red aislada sin
 > egreso, VMs/contenedores desechables. Nunca contra redes reales sin autorización escrita.
 
@@ -786,7 +802,7 @@ La consola lista la sesión y permite operarla:
 | **F1** | Completada | MVP de los 4 componentes: agent + teamserver (listener TCP embebido) + operator API mínimo (`sessions`, `tasks`, `events`) + console (`sessions`/`exec`) | `whoami` de punta a punta **desde la console**, atravesando los 3 planos en loopback |
 | **F2** | Completada | Robustez de sesiones: HEARTBEAT/ACK, reconexión backoff+jitter, resume por nonce, STALE, audit JSONL completo, requeue de tasks, `exit` | Matar el agent y verlo retomar la misma sesión; la auditoría reproduce la sesión completa |
 | **F3** | Completada | Hardening: TLS en plano de sesiones, HMAC del implant, TLS+token del operator API fuera de loopback | Conexión sin credenciales rechazada y auditada en ambos planos |
-| **F4** | Pendiente | Transport HTTP(S) del implant + `cmd/listener` remoto (relay sobre TLS) | Un listener remoto en otro host del laboratorio alimenta al teamserver central |
+| **F4** | Completada | Transport HTTP(S) del implant + `cmd/listener` remoto (relay sobre TLS) | Un listener remoto en otro host del laboratorio alimenta al teamserver central |
 | **F5** | Pendiente | `upload`/`download` con troceado+checksum, persistencia de tasks, multi-operador, web frontend (React/Vue) sobre la misma API | Archivo íntegro verificado por hash; dos operadores concurrentes sin interferirse |
 
 ---

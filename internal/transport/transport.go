@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 )
 
 // Conn delivers whole framed messages over one session connection.
@@ -28,12 +29,15 @@ type Listener interface {
 // Options carries transport tuning shared by every implementation.
 type Options struct {
 	MaxFrameBytes int
-	// TLS session-plane settings (transport "tls").
+	// TLS session-plane settings (transport "tls", also "http" over TLS).
 	CertFile           string // listener side: server certificate
 	KeyFile            string // listener side: server key
 	CAFile             string // agent side: CA bundle to verify the listener
 	ServerName         string // agent side: SNI / verification name (default: addr host)
 	InsecureSkipVerify bool   // agent side, lab only: skip verification (explicit opt-in)
+	// HTTP transport: how long the listener holds a GET /beacon long-poll
+	// open before answering 204 (README §8.2).
+	PollWait time.Duration
 }
 
 // Transport is the factory interface implemented by each transport module and

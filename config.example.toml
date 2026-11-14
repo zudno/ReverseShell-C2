@@ -41,5 +41,14 @@ reconnect_cap = 300.0
 # server_name = "127.0.0.1"          # SNI del listener (default: host de connect_host)
 # insecure = false                   # SOLO laboratorio: saltar verificación (advertido)
 
+[relay]                   # plano de relay: listener standalone ↔ teamserver (F4)
+# host = "127.0.0.1"      # teamserver: bind del endpoint relay
+# port = 5556             # teamserver: 0/ausente = relay desactivado
+# token = "<openssl rand -hex 32>"   # compartido con el listener remoto
+# cert = "certs/relay-cert.pem"      # teamserver: TLS del endpoint relay
+# key  = "certs/relay-key.pem"
+# ca   = "certs/relay-cert.pem"      # listener remoto: CA para verificar al teamserver
+# insecure = false                   # listener remoto: SOLO laboratorio
+
 [audit]
 log = "logs/audit.jsonl"

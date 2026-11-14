@@ -16,6 +16,7 @@ import (
 
 	"reverseshell/internal/api"
 	"reverseshell/internal/protocol"
+	"reverseshell/internal/relay"
 	"reverseshell/internal/session"
 	"reverseshell/internal/transport"
 )
@@ -36,6 +37,13 @@ type Config struct {
 	// AuthToken is the shared implant secret: when set, every REGISTER
 	// must carry a valid HMAC (README §9.2). Empty = auth disabled.
 	AuthToken string
+
+	// Relay plane: when set, the teamserver also accepts connections from
+	// standalone remote listeners over TLS (README §6.2).
+	RelayAddr     string
+	RelayToken    string
+	RelayCertFile string
+	RelayKeyFile  string
 }
 
 // Server is the teamserver core. It implements api.Backend.
@@ -49,6 +57,7 @@ type Server struct {
 	events     *EventBus
 	tr         transport.Transport
 	listener   transport.Listener
+	relay      *relay.Server
 
 	wg     sync.WaitGroup
 	mu     sync.Mutex
@@ -115,6 +124,27 @@ func New(cfg Config) (*Server, error) {
 		nonces:    make(map[string]string),
 	}
 	s.dispatcher = NewDispatcher(s.registry, audit, s.events)
+	if cfg.RelayAddr != "" {
+		if cfg.RelayToken == "" || cfg.RelayCertFile == "" || cfg.RelayKeyFile == "" {
+			_ = af.Close()
+			_ = l.Close()
+			return nil, fmt.Errorf("relay plane requires a token and TLS cert/key")
+		}
+		rs, err := relay.NewServer(relay.ServerConfig{
+			Addr:     cfg.RelayAddr,
+			Token:    cfg.RelayToken,
+			CertFile: cfg.RelayCertFile,
+			KeyFile:  cfg.RelayKeyFile,
+		}, audit)
+		if err != nil {
+			_ = af.Close()
+			_ = l.Close()
+			return nil, err
+		}
+		s.relay = rs
+		audit.LogAttrs(context.Background(), slog.LevelInfo, "relay.start",
+			slog.String("bind", rs.Addr().String()))
+	}
 	audit.LogAttrs(context.Background(), slog.LevelInfo, "listener.start",
 		slog.String("bind", l.Addr().String()),
 		slog.String("transport", tr.Name()))
@@ -123,6 +153,14 @@ func New(cfg Config) (*Server, error) {
 
 // ListenAddr returns the bound session listener address (useful with port 0).
 func (s *Server) ListenAddr() string { return s.listener.Addr().String() }
+
+// RelayAddr returns the bound relay endpoint address ("" when disabled).
+func (s *Server) RelayAddr() string {
+	if s.relay == nil {
+		return ""
+	}
+	return s.relay.Addr().String()
+}
 
 // Audit exposes the audit logger so the operator API audits auth failures on
 // the same choke point.
@@ -138,27 +176,22 @@ func (s *Server) Run(ctx context.Context) error {
 	defer func() {
 		cancel()
 		_ = s.listener.Close()
+		if s.relay != nil {
+			_ = s.relay.Close()
+		}
 	}()
 
 	if s.cfg.SessionCfg.HeartbeatInterval > 0 {
 		go s.reapLoop(rctx)
 	}
 
-	for {
-		conn, err := s.listener.Accept(rctx)
-		if err != nil {
-			if rctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				break
-			}
-			s.operLog.Error("accept failed", "error", err)
-			continue
-		}
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.handleConn(rctx, conn)
-		}()
+	go s.acceptLoop(rctx, s.listener)
+	if s.relay != nil {
+		go func() { _ = s.relay.Run(rctx) }()
+		go s.acceptLoop(rctx, s.relay)
 	}
+
+	<-rctx.Done()
 
 	// Closing every conn is what unblocks each handler's Recv.
 	s.mu.Lock()
@@ -176,6 +209,27 @@ func (s *Server) Run(ctx context.Context) error {
 	s.audit.LogAttrs(context.Background(), slog.LevelInfo, "server.stop")
 	_ = s.auditFile.Close()
 	return nil
+}
+
+// acceptLoop feeds session handlers from one session-plane listener — the
+// embedded listener or the relay endpoint (remote sessions are treated
+// exactly like local ones).
+func (s *Server) acceptLoop(ctx context.Context, l transport.Listener) {
+	for {
+		conn, err := l.Accept(ctx)
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			s.operLog.Error("accept failed", "error", err)
+			continue
+		}
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.handleConn(ctx, conn)
+		}()
+	}
 }
 
 // Sessions implements api.Backend.
